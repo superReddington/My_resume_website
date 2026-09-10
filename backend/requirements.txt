@@ -1,0 +1,16 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-dotenv>=1.0.0
+python-multipart>=0.0.12
+pydantic-settings>=2.0.0
+openai>=1.0.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.3.0
+langgraph>=0.2.0
+psycopg[binary]>=3.2.0
+psycopg-pool>=3.2.0
+pgvector>=0.3.0
+slowapi>=0.1.9
+fastembed>=0.5.0
+pymupdf>=1.24.0

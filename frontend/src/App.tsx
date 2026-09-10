@@ -6,6 +6,7 @@ import { WorkExperienceSection } from './components/WorkExperienceSection'
 import { ProjectsSection } from './components/ProjectsSection'
 import { AdvantagesSection } from './components/AdvantagesSection'
 import { EducationSection } from './components/EducationSection'
+import { ChatWidget } from './components/ChatWidget'
 
 const resume = resumeData as ResumeData
 
@@ -23,6 +24,7 @@ function App() {
         <AdvantagesSection advantages={resume.advantages} />
         <EducationSection education={resume.education} />
       </main>
+      <ChatWidget />
     </div>
   )
 }

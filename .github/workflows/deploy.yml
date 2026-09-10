@@ -1,0 +1,74 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "nginx/**"
+      - "docker-compose.yml"
+      - ".github/workflows/deploy.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip if server secrets are missing
+        id: check
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          if [ -z "$HOST" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "未配置 SSH_HOST，跳过部署。配好 GitHub Secrets 后会自动发布到阿里云。"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.check.outputs.skip != 'true'
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.skip != 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Build frontend
+        if: steps.check.outputs.skip != 'true'
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Setup SSH
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync and restart
+        if: steps.check.outputs.skip != 'true'
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER: ${{ secrets.SSH_USER }}
+        run: |
+          rsync -az --delete \
+            --filter "protect .env" \
+            --filter "protect backend/.env" \
+            --exclude ".git" \
+            --exclude "node_modules" \
+            --exclude ".venv" \
+            --exclude ".env" \
+            --exclude "backend/.env" \
+            ./ "${USER}@${HOST}:/opt/resume/"
+          ssh "${USER}@${HOST}" "cd /opt/resume && docker compose up -d --build"

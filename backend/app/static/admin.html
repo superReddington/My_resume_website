@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>简历知识库</title>
+    <style>
+      :root {
+        --bg: #e4eaf0;
+        --surface: rgb(248 250 252 / 90%);
+        --text: #0f172a;
+        --muted: #475569;
+        --accent: #0284c7;
+        --border: rgb(100 116 139 / 18%);
+        --danger: #be123c;
+        --radius: 16px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: var(--text);
+        background: linear-gradient(165deg, #dce4ed 0%, var(--bg) 45%, #d8e0ea 100%);
+      }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
+      h1 { margin: 0 0 8px; font-size: 1.4rem; }
+      .sub { margin: 0 0 24px; color: var(--muted); }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: 0 8px 32px rgb(15 23 42 / 8%);
+        padding: 20px;
+        margin-bottom: 16px;
+      }
+      .drop {
+        border: 1.5px dashed rgb(2 132 199 / 35%);
+        border-radius: 12px;
+        padding: 28px 16px;
+        text-align: center;
+        background: rgb(2 132 199 / 4%);
+        cursor: pointer;
+      }
+      .drop.drag { background: rgb(2 132 199 / 10%); }
+      .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+      button, .btn {
+        font: inherit;
+        border: none;
+        border-radius: 10px;
+        padding: 8px 14px;
+        cursor: pointer;
+        background: var(--accent);
+        color: #fff;
+      }
+      button.ghost { background: #fff; color: var(--text); border: 1px solid var(--border); }
+      button.danger { background: var(--danger); }
+      button:disabled { opacity: 0.55; cursor: not-allowed; }
+      input[type="password"], input[type="text"] {
+        font: inherit;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        min-width: 220px;
+      }
+      label.check { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 0.9rem; }
+      .status { min-height: 1.4em; color: var(--muted); font-size: 0.9rem; margin-top: 10px; }
+      .status.err { color: var(--danger); }
+      table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+      th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; }
+      .chunk {
+        white-space: pre-wrap;
+        background: #f1f5f9;
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin: 8px 0;
+        font-size: 0.85rem;
+        line-height: 1.6;
+      }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>简历知识库</h1>
+      <p class="sub">上传 PDF 简历，解析后按页分块写入 PostgreSQL / pgvector，供问答助手检索。</p>
+
+      <section class="card" id="login-card">
+        <p>请输入管理令牌（`.env` 里的 `ADMIN_TOKEN`）</p>
+        <div class="row">
+          <input id="token" type="password" placeholder="ADMIN_TOKEN" />
+          <button id="login-btn" type="button">进入</button>
+        </div>
+        <div class="status" id="login-status"></div>
+      </section>
+
+      <section class="card hidden" id="app-card">
+        <div
+          class="drop"
+          id="drop"
+          tabindex="0"
+        >
+          把 PDF 拖到这里，或点击选择文件
+          <input id="file" type="file" accept="application/pdf" hidden />
+        </div>
+        <div class="row">
+          <label class="check">
+            <input id="replace" type="checkbox" />
+            替换已有文档，避免新旧简历混在一起
+          </label>
+          <button id="upload-btn" type="button" disabled>开始解析入库</button>
+        </div>
+        <div class="status" id="upload-status"></div>
+      </section>
+
+      <section class="card hidden" id="list-card">
+        <h2 style="margin:0 0 12px;font-size:1.05rem;">已入库文档</h2>
+        <div id="list"></div>
+        <div id="chunks"></div>
+      </section>
+    </div>
+    <script>
+      const tokenInput = document.getElementById("token");
+      const loginStatus = document.getElementById("login-status");
+      const uploadStatus = document.getElementById("upload-status");
+      const fileInput = document.getElementById("file");
+      const drop = document.getElementById("drop");
+      const uploadBtn = document.getElementById("upload-btn");
+      let selectedFile = null;
+      let adminToken = sessionStorage.getItem("admin_token") || "";
+
+      function headers(extra = {}) {
+        return { "X-Admin-Token": adminToken, ...extra };
+      }
+
+      function setStatus(el, text, isError = false) {
+        el.textContent = text;
+        el.classList.toggle("err", isError);
+      }
+
+      async function failIfNeeded(response) {
+        let detail = "请求失败";
+        try {
+          const data = await response.json();
+          detail = data.detail || JSON.stringify(data);
+        } catch {}
+        throw new Error(detail);
+      }
+
+      async function api(url, options = {}) {
+        const response = await fetch(url, {
+          ...options,
+          headers: headers(options.headers || {}),
+          credentials: "include",
+        });
+        if (!response.ok) await failIfNeeded(response);
+        return response.json();
+      }
+
+      function showApp() {
+        document.getElementById("login-card").classList.add("hidden");
+        document.getElementById("app-card").classList.remove("hidden");
+        document.getElementById("list-card").classList.remove("hidden");
+      }
+
+      async function refreshList() {
+        const data = await api("/v1/admin/documents");
+        const root = document.getElementById("list");
+        if (!data.items.length) {
+          root.innerHTML = "<p class='sub'>还没有文档。上传一份 PDF 简历即可。</p>";
+          return;
+        }
+        root.innerHTML = `
+          <table>
+            <thead>
+              <tr><th>文件</th><th>页数</th><th>分块</th><th>状态</th><th></th></tr>
+            </thead>
+            <tbody>
+              ${data.items
+                .map(
+                  (item) => `
+                <tr>
+                  <td>${item.filename}<div class="sub">${item.error || item.created_at || ""}</div></td>
+                  <td>${item.page_count ?? "-"}</td>
+                  <td>${item.chunk_count ?? 0}</td>
+                  <td>${item.status}</td>
+                  <td>
+                    <button class="ghost" data-view="${item.id}" type="button">查看分块</button>
+                    <button class="danger" data-del="${item.id}" type="button">删除</button>
+                  </td>
+                </tr>`
+                )
+                .join("")}
+            </tbody>
+          </table>`;
+      }
+
+      async function viewChunks(id) {
+        const data = await api(`/v1/admin/documents/${id}`);
+        const box = document.getElementById("chunks");
+        box.innerHTML = `<h3>${data.document.filename} · ${data.chunks.length} 个块</h3>` +
+          data.chunks
+            .map(
+              (chunk) =>
+                `<div class="chunk"><strong>#${chunk.chunk_index + 1} · 第 ${chunk.page_number} 页</strong>\n${chunk.content}</div>`
+            )
+            .join("");
+      }
+
+      document.getElementById("login-btn").onclick = async () => {
+        adminToken = tokenInput.value.trim();
+        try {
+          await api("/v1/admin/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: adminToken }),
+          });
+          sessionStorage.setItem("admin_token", adminToken);
+          showApp();
+          await refreshList();
+        } catch (error) {
+          setStatus(loginStatus, error.message, true);
+        }
+      };
+
+      drop.onclick = () => fileInput.click();
+      drop.ondragover = (event) => {
+        event.preventDefault();
+        drop.classList.add("drag");
+      };
+      drop.ondragleave = () => drop.classList.remove("drag");
+      drop.ondrop = (event) => {
+        event.preventDefault();
+        drop.classList.remove("drag");
+        const file = event.dataTransfer.files[0];
+        if (file) chooseFile(file);
+      };
+      fileInput.onchange = () => {
+        if (fileInput.files[0]) chooseFile(fileInput.files[0]);
+      };
+
+      function chooseFile(file) {
+        selectedFile = file;
+        drop.textContent = `已选择：${file.name}`;
+        uploadBtn.disabled = false;
+      }
+
+      uploadBtn.onclick = async () => {
+        if (!selectedFile) return;
+        uploadBtn.disabled = true;
+        setStatus(uploadStatus, "正在解析 PDF 并写入向量库，请稍候…");
+        const body = new FormData();
+        body.append("file", selectedFile);
+        body.append("replace_existing", document.getElementById("replace").checked ? "true" : "false");
+        try {
+          const doc = await api("/v1/admin/documents", { method: "POST", body });
+          setStatus(
+            uploadStatus,
+            `完成：${doc.filename}，${doc.page_count} 页，${doc.chunk_count} 个文本块。`
+          );
+          selectedFile = null;
+          drop.textContent = "把 PDF 拖到这里，或点击选择文件";
+          await refreshList();
+        } catch (error) {
+          setStatus(uploadStatus, error.message, true);
+          uploadBtn.disabled = false;
+        }
+      };
+
+      document.getElementById("list").onclick = async (event) => {
+        const viewId = event.target.getAttribute("data-view");
+        const delId = event.target.getAttribute("data-del");
+        if (viewId) await viewChunks(viewId);
+        if (delId) {
+          await api(`/v1/admin/documents/${delId}`, { method: "DELETE" });
+          document.getElementById("chunks").innerHTML = "";
+          await refreshList();
+        }
+      };
+
+      if (adminToken) {
+        api("/v1/admin/documents")
+          .then(() => {
+            showApp();
+            return refreshList();
+          })
+          .catch(() => {
+            sessionStorage.removeItem("admin_token");
+            adminToken = "";
+          });
+      }
+    </script>
+  </body>
+</html>
