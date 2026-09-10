@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 const API_BASE = import.meta.env.VITE_ASSISTANT_API_URL ?? ''
 
