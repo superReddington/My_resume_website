@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     embedding_base_url: str = ""
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     embedding_dim: int = 512
+    # 2G 服务器不要本地下载/加载 embedding 模型。本机可设 EMBEDDING_ALLOW_LOCAL=true。
+    embedding_allow_local: bool = False
 
     database_url: str = "postgresql://postgres:postgres@127.0.0.1:5433/resume_agent"
     admin_token: str = "change-me"

@@ -7,10 +7,10 @@ from uuid import uuid4
 from app.core.config import settings
 from app.db.pool import get_pool
 from app.ingest.chunking import split_pages
-from app.ingest.embeddings import embed_texts
+from app.ingest.embeddings import embed_texts, embeddings_enabled
+from app.ingest.pdf import extract_pages
 
 logger = logging.getLogger(__name__)
-from app.ingest.pdf import extract_pages
 
 BATCH_SIZE = 32
 
@@ -62,7 +62,10 @@ def ingest_pdf(
             if not chunks:
                 raise ValueError("PDF 解析后没有可用文本块")
 
-            embeddings = _embed_in_batches([content for _, content in chunks])
+            if embeddings_enabled():
+                embeddings = _embed_in_batches([content for _, content in chunks])
+            else:
+                embeddings = [None] * len(chunks)
             for index, ((page_number, content), embedding) in enumerate(
                 zip(chunks, embeddings, strict=True)
             ):
@@ -168,7 +171,7 @@ def delete_document(document_id: str) -> bool:
     return True
 
 
-def search_chunks(query: str, limit: int = 6) -> list[dict]:
+def search_chunks(query: str, limit: int = 8) -> list[dict]:
     query = query.strip()
     if not query:
         return []
@@ -178,25 +181,28 @@ def search_chunks(query: str, limit: int = 6) -> list[dict]:
         total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()
         if not total or total[0] == 0:
             return []
+        chunk_count = int(total[0])
+        fetch_limit = chunk_count if chunk_count <= 16 else limit
 
         vector_rows: list[tuple] = []
-        try:
-            embedding = embed_texts([query])[0]
-            vector_rows = conn.execute(
-                """
-                SELECT c.id, c.content, c.page_number, c.chunk_index, d.filename,
-                       1 - (c.embedding <=> %s::vector) AS score
-                FROM chunks c
-                JOIN documents d ON d.id = c.document_id
-                WHERE c.embedding IS NOT NULL
-                ORDER BY c.embedding <=> %s::vector
-                LIMIT %s
-                """,
-                (embedding, embedding, limit),
-            ).fetchall()
-        except Exception:
-            logger.exception("向量检索失败，将回退到关键词检索")
-            vector_rows = []
+        if embeddings_enabled():
+            try:
+                embedding = embed_texts([query])[0]
+                vector_rows = conn.execute(
+                    """
+                    SELECT c.id, c.content, c.page_number, c.chunk_index, d.filename,
+                           1 - (c.embedding <=> %s::vector) AS score
+                    FROM chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    WHERE c.embedding IS NOT NULL
+                    ORDER BY c.embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (embedding, embedding, fetch_limit),
+                ).fetchall()
+            except Exception:
+                logger.exception("向量检索失败，将回退到原文检索")
+                vector_rows = []
 
         keyword_rows = conn.execute(
             """
@@ -204,15 +210,28 @@ def search_chunks(query: str, limit: int = 6) -> list[dict]:
                    similarity(c.content, %s) AS score
             FROM chunks c
             JOIN documents d ON d.id = c.document_id
-            WHERE c.content ILIKE %s
             ORDER BY similarity(c.content, %s) DESC
             LIMIT %s
             """,
-            (query, f"%{query}%", query, limit),
+            (query, query, fetch_limit),
         ).fetchall()
 
+        fallback_rows: list[tuple] = []
+        if not vector_rows:
+            fallback_rows = conn.execute(
+                """
+                SELECT c.id, c.content, c.page_number, c.chunk_index, d.filename,
+                       0.01 AS score
+                FROM chunks c
+                JOIN documents d ON d.id = c.document_id
+                ORDER BY d.created_at DESC, c.chunk_index
+                LIMIT %s
+                """,
+                (fetch_limit,),
+            ).fetchall()
+
     merged: dict[str, dict] = {}
-    for row in [*vector_rows, *keyword_rows]:
+    for row in [*vector_rows, *keyword_rows, *fallback_rows]:
         item_id = str(row[0])
         payload = {
             "id": item_id,
@@ -227,7 +246,7 @@ def search_chunks(query: str, limit: int = 6) -> list[dict]:
             merged[item_id] = payload
 
     ranked = sorted(merged.values(), key=lambda item: item["score"], reverse=True)
-    return ranked[:limit]
+    return ranked[:fetch_limit]
 
 
 def _embed_in_batches(texts: list[str]) -> list[list[float]]:

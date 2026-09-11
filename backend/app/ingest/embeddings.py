@@ -3,12 +3,18 @@ from functools import lru_cache
 from app.core.config import settings
 
 
+def embeddings_enabled() -> bool:
+    return bool(settings.embedding_api_key) or settings.embedding_allow_local
+
+
 def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
     if settings.embedding_api_key:
         return _embed_remote(texts)
-    return _embed_local(texts)
+    if settings.embedding_allow_local:
+        return _embed_local(texts)
+    raise RuntimeError("未配置远程 embedding，且已禁止本地下载模型")
 
 
 def _embed_remote(texts: list[str]) -> list[list[float]]:

@@ -64,6 +64,8 @@ async def upload_document(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        raise HTTPException(status_code=500, detail="解析入库失败，请稍后重试") from None
     return document
 
 
