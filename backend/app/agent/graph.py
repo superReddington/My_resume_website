@@ -1,12 +1,20 @@
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from typing import Annotated, TypedDict
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 
 from app.agent.prompts import SYSTEM_PROMPT
-from app.agent.tools import search_knowledge
 from app.core.config import settings
+from app.ingest.pipeline import search_chunks
 
 _graph = None
+
+
+class AgentState(TypedDict):
+    messages: Annotated[list[BaseMessage], add_messages]
+    context: str
 
 
 def get_llm() -> ChatOpenAI:
@@ -21,14 +29,49 @@ def get_llm() -> ChatOpenAI:
     )
 
 
+def _latest_question(messages: list[BaseMessage]) -> str:
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            return str(message.content or "").strip()
+    return ""
+
+
+def _format_context(hits: list[dict]) -> str:
+    if not hits:
+        return "（本次检索没有返回任何原文片段。不要编造履历。）"
+    parts: list[str] = []
+    for index, hit in enumerate(hits, start=1):
+        page = hit["page_number"] or "?"
+        parts.append(f"[{index}] {hit['filename']} 第{page}页\n{hit['content']}")
+    return "\n\n".join(parts)
+
+
+def retrieve(state: AgentState) -> dict:
+    question = _latest_question(state["messages"])
+    hits = search_chunks(question) if question else []
+    return {"context": _format_context(hits)}
+
+
+def generate(state: AgentState) -> dict:
+    prompt = SYSTEM_PROMPT.replace("{context}", state.get("context") or "")
+    response = get_llm().invoke([SystemMessage(content=prompt), *state["messages"]])
+    return {"messages": [response]}
+
+
+def _build_graph():
+    graph = StateGraph(AgentState)
+    graph.add_node("retrieve", retrieve)
+    graph.add_node("generate", generate)
+    graph.add_edge(START, "retrieve")
+    graph.add_edge("retrieve", "generate")
+    graph.add_edge("generate", END)
+    return graph.compile()
+
+
 def get_graph():
     global _graph
     if _graph is None:
-        _graph = create_react_agent(
-            get_llm(),
-            tools=[search_knowledge],
-            prompt=SYSTEM_PROMPT,
-        )
+        _graph = _build_graph()
     return _graph
 
 
@@ -48,6 +91,6 @@ def run_once(question: str, history: list[dict] | None = None) -> str:
     graph = get_graph()
     messages = to_langchain_messages(history or [])
     messages.append(HumanMessage(content=question))
-    result = graph.invoke({"messages": messages})
+    result = graph.invoke({"messages": messages, "context": ""})
     final = result["messages"][-1]
     return getattr(final, "content", "") or ""

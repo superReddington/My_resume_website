@@ -75,7 +75,7 @@ async def _stream_answer(session_id: str, message: str) -> AsyncIterator[str]:
 
     try:
         async for event in graph.astream_events(
-            {"messages": lc_messages},
+            {"messages": lc_messages, "context": ""},
             version="v2",
         ):
             kind = event.get("event")

@@ -16,15 +16,17 @@ function App() {
       <div className="page__glow page__glow--left" aria-hidden="true" />
       <div className="page__glow page__glow--right" aria-hidden="true" />
 
-      <main className="main">
-        <ProfileSection profile={resume.profile} />
-        <SkillsSection skills={resume.skills} />
-        <WorkExperienceSection experiences={resume.workExperience} />
-        <ProjectsSection projects={resume.projects} />
-        <AdvantagesSection advantages={resume.advantages} />
-        <EducationSection education={resume.education} />
-      </main>
-      <ChatWidget />
+      <div className="page__split">
+        <main className="main">
+          <ProfileSection profile={resume.profile} />
+          <SkillsSection skills={resume.skills} />
+          <WorkExperienceSection experiences={resume.workExperience} />
+          <ProjectsSection projects={resume.projects} />
+          <AdvantagesSection advantages={resume.advantages} />
+          <EducationSection education={resume.education} />
+        </main>
+        <ChatWidget />
+      </div>
     </div>
   )
 }

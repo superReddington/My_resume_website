@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from uuid import uuid4
 
@@ -7,6 +8,8 @@ from app.core.config import settings
 from app.db.pool import get_pool
 from app.ingest.chunking import split_pages
 from app.ingest.embeddings import embed_texts
+
+logger = logging.getLogger(__name__)
 from app.ingest.pdf import extract_pages
 
 BATCH_SIZE = 32
@@ -192,6 +195,7 @@ def search_chunks(query: str, limit: int = 6) -> list[dict]:
                 (embedding, embedding, limit),
             ).fetchall()
         except Exception:
+            logger.exception("向量检索失败，将回退到关键词检索")
             vector_rows = []
 
         keyword_rows = conn.execute(
