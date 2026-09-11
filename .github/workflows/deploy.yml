@@ -54,10 +54,18 @@ jobs:
           install -m 700 -d ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
+          printf '%s\n' \
+            'Host *' \
+            '  ServerAliveInterval 20' \
+            '  ServerAliveCountMax 120' \
+            '  TCPKeepAlive yes' \
+            > ~/.ssh/config
+          chmod 600 ~/.ssh/config
           ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Sync and restart
         if: steps.check.outputs.skip != 'true'
+        timeout-minutes: 40
         env:
           HOST: ${{ secrets.SSH_HOST }}
           USER: ${{ secrets.SSH_USER }}
@@ -71,4 +79,4 @@ jobs:
             --exclude ".env" \
             --exclude "backend/.env" \
             ./ "${USER}@${HOST}:/opt/resume/"
-          ssh "${USER}@${HOST}" "cd /opt/resume && docker compose up -d --build"
+          ssh "${USER}@${HOST}" "cd /opt/resume && docker compose up -d --build --progress=plain"
