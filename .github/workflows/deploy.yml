@@ -79,4 +79,4 @@ jobs:
             --exclude ".env" \
             --exclude "backend/.env" \
             ./ "${USER}@${HOST}:/opt/resume/"
-          ssh "${USER}@${HOST}" "cd /opt/resume && docker compose up -d --build --progress=plain"
+          ssh "${USER}@${HOST}" "cd /opt/resume && docker compose up -d --build"
