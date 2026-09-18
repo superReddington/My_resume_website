@@ -89,7 +89,27 @@ async function readSse(
   }
 }
 
+const MOBILE_QUERY = '(max-width: 900px)'
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia(MOBILE_QUERY).matches : false,
+  )
+
+  useEffect(() => {
+    const media = window.matchMedia(MOBILE_QUERY)
+    const onChange = () => setIsMobile(media.matches)
+    onChange()
+    media.addEventListener('change', onChange)
+    return () => media.removeEventListener('change', onChange)
+  }, [])
+
+  return isMobile
+}
+
 export function ChatWidget() {
+  const isMobile = useIsMobile()
+  const [open, setOpen] = useState(false)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -99,10 +119,33 @@ export function ChatWidget() {
     },
   ])
   const listRef = useRef<HTMLDivElement>(null)
+  const launcherRef = useRef<HTMLButtonElement>(null)
+  const mobileOpen = isMobile && open
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
   }, [messages])
+
+  useEffect(() => {
+    document.body.classList.toggle('chat-open', mobileOpen)
+    return () => document.body.classList.remove('chat-open')
+  }, [mobileOpen])
+
+  useEffect(() => {
+    if (!open) return
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') closeChat()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, isMobile])
+
+  function closeChat() {
+    setOpen(false)
+    if (isMobile) {
+      window.setTimeout(() => launcherRef.current?.focus(), 0)
+    }
+  }
 
   async function send(text: string) {
     const question = text.trim()
@@ -155,8 +198,35 @@ export function ChatWidget() {
   }
 
   return (
-    <aside className="chat-widget">
-      <section className="chat-panel" aria-label="猪猪小敏">
+    <aside className={`chat-widget${mobileOpen ? ' chat-widget--open' : ''}`}>
+      <button
+        type="button"
+        className="chat-launcher"
+        ref={launcherRef}
+        hidden={!isMobile || open}
+        onClick={() => setOpen(true)}
+        aria-label="打开猪猪小敏问答助手"
+        aria-expanded={mobileOpen}
+        aria-controls="chat-panel"
+      >
+        <span className="chat-launcher__ring" aria-hidden="true" />
+        <img className="chat-launcher__mascot" src={pigHead} alt="" width={56} height={56} />
+        <span className="chat-launcher__hint">问</span>
+      </button>
+      <button
+        type="button"
+        className="chat-backdrop"
+        hidden={!mobileOpen}
+        tabIndex={-1}
+        aria-hidden="true"
+        onClick={closeChat}
+      />
+      <section
+        id="chat-panel"
+        className="chat-panel"
+        aria-label="猪猪小敏"
+        inert={isMobile && !open ? true : undefined}
+      >
         <header className="chat-panel__header">
           <img
             className={`chat-panel__mascot${busy ? ' chat-panel__mascot--busy' : ''}`}
@@ -165,7 +235,19 @@ export function ChatWidget() {
             width={40}
             height={40}
           />
-          <strong>猪猪小敏</strong>
+          <div className="chat-panel__titles">
+            <strong>猪猪小敏</strong>
+            <span>点我聊聊这份简历</span>
+          </div>
+          <button
+            type="button"
+            className="chat-panel__close"
+            hidden={!mobileOpen}
+            onClick={closeChat}
+            aria-label="关闭问答助手"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
         </header>
         <div className="chat-panel__messages" ref={listRef}>
           {messages.map((item, index) => (
